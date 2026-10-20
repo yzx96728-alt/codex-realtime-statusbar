@@ -60,7 +60,7 @@ final class SessionCatalog {
     func resolve(route: String?, titles: [String]) -> (SessionReference, String)? {
         if let route = route, let id = Self.routeThreadID(route) {
             guard let reference = byID[id] else { return nil }
-            return (reference, "窗口会话标识")
+            return (reference, L("窗口会话标识"))
         }
         // Only exact, unique titles are accepted. Background activity is never used as a signal.
         var matches: [String: SessionReference] = [:]
@@ -76,7 +76,7 @@ final class SessionCatalog {
             }
         }
         guard matches.count == 1, let reference = matches.values.first else { return nil }
-        return (reference, "唯一窗口标题")
+        return (reference, L("唯一窗口标题"))
     }
 
     static func routeThreadID(_ route: String) -> String? {
@@ -111,11 +111,11 @@ final class ChatFollower {
         }
         var value: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(root, kAXWindowsAttribute as CFString, &value)
-        guard error == .success else { return (nil, "窗口读取失败（AX \(error.rawValue)）") }
-        guard let windows = value as? [AXUIElement], !windows.isEmpty else { return (nil, "应用未提供可读窗口") }
+        guard error == .success else { return (nil, L("窗口读取失败（AX {0}）", String(describing: error.rawValue))) }
+        guard let windows = value as? [AXUIElement], !windows.isEmpty else { return (nil, L("应用未提供可读窗口")) }
         let main = windows.map { (attribute($0, kAXMainAttribute) as? NSNumber)?.boolValue ?? false }
         let focused = windows.map { (attribute($0, kAXFocusedAttribute) as? NSNumber)?.boolValue ?? false }
-        guard let index = Self.windowIndex(main: main, focused: focused) else { return (nil, "多个窗口无法确定当前项") }
+        guard let index = Self.windowIndex(main: main, focused: focused) else { return (nil, L("多个窗口无法确定当前项")) }
         return (windows[index], "")
     }
 
@@ -188,7 +188,7 @@ final class ChatFollower {
     func current() -> VisibleSession {
         guard UserDefaults.standard.bool(forKey: "followAccessConfirmed"), AXIsProcessTrusted() else { return .permissionRequired }
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first else {
-            return .unavailable("Codex 未运行")
+            return .unavailable(L("Codex 未运行"))
         }
         let root = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(root, 0.5)
@@ -202,14 +202,14 @@ final class ChatFollower {
         if let route = string(window, kAXDocumentAttribute) { routes.append(route) }
         let routeIDs = Set(routes.compactMap { SessionCatalog.routeThreadID($0) })
         // Conflicting window locations or an explicit unknown/remote thread must not fall back to a different title.
-        if routeIDs.count > 1 { return .unavailable("当前窗口含多个会话") }
+        if routeIDs.count > 1 { return .unavailable(L("当前窗口含多个会话")) }
         if let id = routeIDs.first {
-            guard let reference = catalog.byID[id] else { return .unavailable("此聊天暂无本地记录") }
-            return .matched(reference, "窗口会话标识")
+            guard let reference = catalog.byID[id] else { return .unavailable(L("此聊天暂无本地记录")) }
+            return .matched(reference, L("窗口会话标识"))
         }
-        if let (reference, _) = catalog.resolve(route: nil, titles: header.titles) { return .matched(reference, "顶部聊天名称") }
-        if header.titles.contains(where: { (catalog.byTitle[$0]?.count ?? 0) > 1 }) { return .unavailable("顶部名称对应多个聊天") }
+        if let (reference, _) = catalog.resolve(route: nil, titles: header.titles) { return .matched(reference, L("顶部聊天名称")) }
+        if header.titles.contains(where: { (catalog.byTitle[$0]?.count ?? 0) > 1 }) { return .unavailable(L("顶部名称对应多个聊天")) }
         if let (reference, method) = catalog.resolve(route: nil, titles: windowTitles) { return .matched(reference, method) }
-        return .unavailable(header.titles.isEmpty ? "未读到顶部聊天名称" : "顶部名称未匹配聊天")
+        return .unavailable(header.titles.isEmpty ? L("未读到顶部聊天名称") : L("顶部名称未匹配聊天"))
     }
 }

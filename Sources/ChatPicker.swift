@@ -44,7 +44,7 @@ func availableChats() -> [ChatChoice] {
         let file = text(2)
         guard FileManager.default.fileExists(atPath: file) else { continue }
         let title = text(1).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-        let reference = SessionReference(id: text(0), title: title.isEmpty ? "未命名聊天" : title, path: file, cwd: text(4))
+        let reference = SessionReference(id: text(0), title: title.isEmpty ? L("未命名聊天") : title, path: file, cwd: text(4))
         choices.append(ChatChoice(reference: reference,
             updated: Date(timeIntervalSince1970: sqlite3_column_double(statement, 3)),
             folder: URL(fileURLWithPath: text(4)).lastPathComponent))
@@ -66,12 +66,12 @@ final class ChatPicker: NSWindowController, NSTableViewDataSource, NSTableViewDe
         self.onChoose = onChoose
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 490, height: 400),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "选择要监控的聊天"
+        window.title = L("选择要监控的聊天")
         window.isReleasedWhenClosed = false
         window.level = .floating
         super.init(window: window)
         guard let content = window.contentView else { return }
-        search.placeholderString = "搜索聊天名称"
+        search.placeholderString = L("搜索聊天名称")
         search.sendsSearchStringImmediately = true
         search.delegate = self
         search.target = self; search.action = #selector(enterSearch)
@@ -90,7 +90,7 @@ final class ChatPicker: NSWindowController, NSTableViewDataSource, NSTableViewDe
         scroll.borderType = .bezelBorder
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
-        hint.stringValue = "\(choices.count) 个本地聊天 · 点击名称即可切换监控"
+        hint.stringValue = L("{0} 个本地聊天 · 点击名称即可切换监控", String(describing: choices.count))
         for view in [search, scroll, hint] {
             view.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(view)
@@ -140,7 +140,7 @@ final class ChatPicker: NSWindowController, NSTableViewDataSource, NSTableViewDe
         }
         table.deselectAll(nil)
         table.reloadData()
-        hint.stringValue = results.isEmpty ? "没有找到匹配的本地聊天" : "\(results.count) 个聊天 · 点击名称即可切换监控"
+        hint.stringValue = results.isEmpty ? L("没有找到匹配的本地聊天") : L("{0} 个聊天 · 点击名称即可切换监控", String(describing: results.count))
     }
     @objc func enterSearch() {
         guard NSApp.currentEvent?.type == .keyDown, NSApp.currentEvent?.keyCode == 36 else { return }

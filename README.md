@@ -1,6 +1,12 @@
 # Codex实时状态栏
 
+简体中文 · [English](README.en.md)
+
+<img src="Resources/icons/AppIcon.png" alt="Codex实时状态栏应用图标" width="96" height="96">
+
 一个轻巧、半透明的 macOS 浮窗，用于查看 Codex 本地聊天用量。**日常监控不调用模型，不产生模型 token 消耗。**
+
+**体积说明：** 状态栏 v1.6 下载包约366KB，通用应用解压后约1MB；GitHub Desktop 的数百MB安装包是另一个独立客户端，运行状态栏无需启动它。图标资源约94KB，PNG预览和矢量源文件不会打入应用。
 
 这是独立的社区辅助应用，与 OpenAI、Codex 官方无隶属关系。
 
@@ -8,16 +14,17 @@
 
 ## 能做什么
 
-- 自动跟随当前 Codex 聊天，或按名称搜索并固定监控。
+- 自动跟随当前 Codex 聊天，或按名称搜索并固定监控。菜单不再展开最近聊天列表。
 - 点击数字，查看累计 / 最近请求的 token、缓存命中口径和上下文估算。
 - 80% / 90% 上下文轻提醒：只看新用量，在真实任务结束后提示，不抢输入焦点。
 - 一键复制 `/compact` 或 `$handoff` 指令，返回指定聊天，再由你粘贴并发送。
 - 离开 Codex 自动隐藏，返回后先刷新聊天再显示。
 - 保存透明度、窗口位置、提醒状态及上次准备交接的来源。
+- `⋯ → 语言 / Language` 中切换简体中文与 English，立即生效并记住选择。聊天名称保持原文。
 
 ## 下载与开始使用
 
-在[下载页面](https://github.com/yzx96728-alt/codex-realtime-statusbar/releases/latest)下载 `CodexRealtimeStatusbar-v1.5-macOS-universal.zip`，解压后得到 `Codex实时状态栏.app`。构建包包含 Apple Silicon 和 Intel 两种架构，最低构建目标为 macOS 13。
+在[下载页面](https://github.com/yzx96728-alt/codex-realtime-statusbar/releases/latest)下载 `CodexRealtimeStatusbar-v1.6-macOS-universal.zip`，解压后得到 `Codex实时状态栏.app`。构建包包含 Apple Silicon 和 Intel 两种架构，最低构建目标为 macOS 13。
 
 1. 将应用放到一个固定位置后启动，例如“应用程序”文件夹。
 2. 点击 `⋯`，开启“自动跟随当前聊天”，按提示在“系统设置 → 隐私与安全性 → 辅助功能”授权当前这份应用。
@@ -27,6 +34,10 @@
 **发布包使用本地 ad-hoc 签名，没有 Apple Developer ID 公证。** 若系统阻止打开，不需要降低系统安全设置；可以阅读源码并按下方步骤在本机构建。每次更新后以小窗实际识别结果核验辅助功能权限，而不是只看系统开关。
 
 > ARM Mac 的实际验证环境：macOS 26.5.1。Intel 版本仅完成交叉编译，尚未在 Intel 机器实测。最低版本为构建目标，不代表已覆盖所有 macOS / Codex 组合。
+
+## 语言
+
+同一个应用包含中文和英文界面，无需分别安装。切换语言不会重置聊天选择、用量、权限或提醒记录；交接指令随所选语言变化，`/compact` 保持原命令。macOS 自带的系统对话框仍遵循系统语言。
 
 ## 指标口径
 
@@ -78,6 +89,8 @@ ARCHITECTURES=arm64 ./scripts/build.sh
 
 - `Sources/`：浮窗、跟随、聊天选择、用量与提醒状态。
 - `Tests/`：用量口径、阈值、完成事件门控、重启去重、聊天匹配与指令校验。
+- `Resources/AppIcon.icns` 与 `Resources/icons/`：应用图标、可编辑矢量源文件及预览。
+- `scripts/make-icon.swift`：在本机生成标准尺寸图标，不调用模型。
 - `Resources/Info.plist`：通用应用信息，不含本机初始聊天路径。
 - `scripts/`：构建、测试、打包。
 - [完整使用说明](docs/使用说明.md)
