@@ -1,0 +1,16 @@
+.DS_Store
+build/
+dist/
+*.app/
+*.zip
+*.dmg
+*.jsonl
+*.sqlite*
+*.db
+*.plist.local
+.env
+.env.*
+backups/
+session-path.txt
+*.log
+.swift-module-cache/

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="160" viewBox="0 0 800 160">
+<rect width="800" height="160" rx="16" fill="#f4f5f7"/>
+<text x="400" y="38" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="14" fill="#727984">Codex实时状态栏 · 界面示意，数据为虚构值</text>
+<rect x="139" y="64" width="522" height="45" rx="13" fill="#fff" stroke="#e2e5ea" opacity=".8"/>
+<g font-family="-apple-system, sans-serif" font-size="16" fill="#727984">
+<text x="156" y="92">↪</text><text x="186" y="92">32.0K tok</text><text x="294" y="92">·</text><text x="319" y="92">缓存 95%</text><text x="430" y="92">·</text><text x="454" y="92">上下文≈24%</text><text x="621" y="92">⋯</text>
+</g>
+</svg>
