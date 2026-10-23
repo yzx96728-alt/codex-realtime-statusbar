@@ -186,7 +186,7 @@ final class ChatFollower {
     }
 
     func current() -> VisibleSession {
-        guard UserDefaults.standard.bool(forKey: "followAccessConfirmed"), AXIsProcessTrusted() else { return .permissionRequired }
+        guard AXIsProcessTrusted() else { return .permissionRequired }
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first else {
             return .unavailable(L("Codex 未运行"))
         }

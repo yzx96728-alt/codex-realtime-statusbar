@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import ServiceManagement
 import Foundation
 
 let arguments = CommandLine.arguments
@@ -13,12 +14,32 @@ if arguments.contains("--check") {
         guard let path = arguments.last else { exit(2) }
         let r = try readUsage(URL(fileURLWithPath: path))
         guard let m = r.metrics else { print("No usage event available"); exit(2) }
-        let result: [String: Any] = ["total_tokens": m.total, "input_tokens": m.input, "cached_input_tokens": m.cached,
-            "output_tokens": m.cumulative.output, "reasoning_output_tokens": m.cumulative.reasoning,
+        let result: [String: Any] = ["total_tokens": m.total as Any? ?? NSNull(), "input_tokens": m.input as Any? ?? NSNull(), "cached_input_tokens": m.cached as Any? ?? NSNull(),
+            "output_tokens": m.cumulative.output as Any? ?? NSNull(), "reasoning_output_tokens": m.cumulative.reasoning as Any? ?? NSNull(),
+            "usage_kind": m.kind.rawValue, "compaction_confirmed": r.compactionConfirmed, "read_gap": r.hasReadGap,
             "context_percent_estimate": m.contextPercent as Any? ?? NSNull(), "timestamp": m.timestamp,
             "task_running": r.taskRunning as Any? ?? NSNull()]
         print(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self)); exit(0)
     } catch { print("Read failed: \(error.localizedDescription)"); exit(1) }
+}
+// Installer operations use native process APIs, never UI scripting or TCC changes.
+if arguments.contains("--installer-running") {
+    for app in NSRunningApplication.runningApplications(withBundleIdentifier: "local.cc.codex-usage-monitor") where app.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+        if let path = app.bundleURL?.path { print(path) }
+    }
+    exit(0)
+}
+if arguments.contains("--installer-stop"), let path = arguments.last {
+    let apps = NSRunningApplication.runningApplications(withBundleIdentifier: "local.cc.codex-usage-monitor").filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+    guard apps.allSatisfy({ $0.bundleURL?.standardizedFileURL.path == URL(fileURLWithPath: path).standardizedFileURL.path }) else { print("Another copy is running; quit it first."); exit(1) }
+    guard apps.allSatisfy({ $0.terminate() }) else { print("Quit was refused; no force termination performed."); exit(1) }
+    let deadline = Date().addingTimeInterval(10)
+    while apps.contains(where: { !$0.isTerminated }) && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+    exit(apps.allSatisfy { $0.isTerminated } ? 0 : 1)
+}
+if arguments.contains("--installation-status") {
+    let result: [String: Any] = ["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "unknown", "accessibility_trusted": AXIsProcessTrusted(), "login_status": String(describing: SMAppService.mainApp.status), "login_enabled": SMAppService.mainApp.status == .enabled, "login_requires_approval": SMAppService.mainApp.status == .requiresApproval]
+    print(String(decoding: try! JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)); exit(0)
 }
 final class FloatingPanel: NSPanel { override var canBecomeKey: Bool { true } }
 final class HoverSurface: NSView {
@@ -75,13 +96,18 @@ func cardView(_ views: [NSView], width: CGFloat = 370) -> NSView {
 final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var panel: NSPanel!
     var timer: Timer?, observer: NSObjectProtocol?
+    var workspaceObservers: [NSObjectProtocol] = []
+    var statusItem: NSStatusItem?
     var selected: URL?, reference: SessionReference?, snapshot: UsageSnapshot?
     var metricModification: Date?
+    var metricSize: UInt64?
+    let usageQueue = DispatchQueue(label: "local.cc.usage-reading", qos: .utility)
+    var usageGate = UsageReadGate()
     let follower = ChatFollower()
     let detectionQueue = DispatchQueue(label: "local.cc.usage-following", qos: .utility)
     var detecting = false, generation = 0
     var suppressReminders = false
-    var followEnabled = UserDefaults.standard.object(forKey: "followCurrentChat") as? Bool ?? false
+    var followEnabled = UserDefaults.standard.object(forKey: "followCurrentChat") as? Bool ?? true
     var followStatus = L("等待识别当前聊天")
     var chosenTitle = L("手动选定聊天")
     var chatPicker: ChatPicker?
@@ -101,6 +127,7 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }()
     var detail: NSPopover?, hint: NSPanel?
     var detailTag: Int?
+    var hintUsageEventID = ""
     var hintReminderID: String?, restorePicker = false
     var lastSource: HandoffSource? = {
         guard let data = UserDefaults.standard.data(forKey: "lastHandoffSource") else { return nil }
@@ -114,6 +141,14 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        // A second launch must not create another monitor or mutate login state.
+        if NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier!).contains(where: { $0.processIdentifier < ProcessInfo.processInfo.processIdentifier }) { NSApp.terminate(nil); return }
+        if arguments.contains("--enable-login") { configureLogin(enabled: true) }
+        if arguments.contains("--disable-login") { configureLogin(enabled: false) }
+        // The menu remains reachable while Codex is absent and the bar is hidden.
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem?.button?.title = "↪"
+        statusItem?.button?.target = self; statusItem?.button?.action = #selector(showStatusMenu)
         if let saved = UserDefaults.standard.string(forKey: preferenceKey) { selected = URL(fileURLWithPath: saved) }
         else if let initial = Bundle.main.object(forInfoDictionaryKey: "CCInitialSessionPath") as? String { selected = URL(fileURLWithPath: initial.trimmingCharacters(in: .whitespacesAndNewlines)) }
         reference = availableChats().first(where: { $0.reference.path == selected?.path })?.reference
@@ -146,10 +181,18 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSLayoutConstraint.activate([row.leadingAnchor.constraint(equalTo: surface.leadingAnchor, constant: 8), row.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -7), row.centerYAnchor.constraint(equalTo: surface.centerYAnchor), session.widthAnchor.constraint(equalToConstant: 16), mode.widthAnchor.constraint(equalToConstant: 12)])
         if !panel.setFrameUsingName("CCUsageCompactPanel"), let screen = NSScreen.main { panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.maxX - 364, y: screen.visibleFrame.minY + 12)) }
         observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.foregroundChanged() }
-        refresh(); timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.refresh() }
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.foregroundChanged() })
+        }
+        workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }; self.generation += 1; self.usageGate.invalidate(); self.timer?.invalidate(); self.timer = nil; self.detail?.close(); self.dismissHint(); self.panel.orderOut(nil)
+        })
+        foregroundChanged()
     }
     func foregroundChanged() {
-        generation += 1
+        generation += 1; usageGate.invalidate()
+        timer?.invalidate(); timer = nil
+        if allowedVisible { timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.refresh() } }
         if !allowedVisible {
             restorePicker = chatPicker?.window?.isVisible == true
             detail?.close(); dismissHint(); chatPicker?.window?.orderOut(nil); panel.orderOut(nil)
@@ -200,7 +243,7 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func recordFollowDiagnostic(_ value: String) {
         if UserDefaults.standard.string(forKey: "followDiagnostic") != value { UserDefaults.standard.set(value, forKey: "followDiagnostic") }
     }
-    func resetSnapshot() { snapshot = nil; metricModification = nil; detail?.close(); dismissHint() }
+    func resetSnapshot() { usageGate.invalidate(); snapshot = nil; metricModification = nil; metricSize = nil; detail?.close(); dismissHint() }
     func clearDisplay(_ message: String) {
         tokens.title = message; tokens.toolTip = followStatus; cache.title = "—"; context.title = L("上下文 —")
         context.contentTintColor = .secondaryLabelColor
@@ -208,37 +251,65 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     func refreshMetrics() {
         guard let selected else { clearDisplay(L("未选择聊天")); return }
-        do {
-            let modification = try selected.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-            if snapshot == nil || modification != metricModification {
-                let record = try readUsage(selected)
-                let ref = reference ?? SessionReference(id: "", title: chosenTitle, path: selected.path)
-                snapshot = UsageSnapshot(reference: ref, record: record); metricModification = modification
-                var state = reminderStates[ref.id] ?? ReminderState()
-                let old = state
-                state.observe(record, now: Date(), enabled: alertsEnabled)
-                reminderStates[ref.id] = state
-                if state != old { saveReminders() }
+        let ref = reference ?? SessionReference(id: "", title: chosenTitle, path: selected.path)
+        if usageGate.current == nil {
+            let ticket = usageGate.begin(sessionID: ref.id, path: selected.path)
+            let revision = generation, oldDate = metricModification, oldSize = metricSize
+            let needsSnapshot = snapshot == nil
+            usageQueue.async { [weak self] in
+                let result = Result { () -> (UsageRecord?, Date?, UInt64) in
+                    let attributes = try FileManager.default.attributesOfItem(atPath: selected.path)
+                    let date = attributes[.modificationDate] as? Date
+                    let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+                    let changed = needsSnapshot || date != oldDate || size != oldSize
+                    return (changed ? try readUsage(selected) : nil, date, size)
+                }
+                DispatchQueue.main.async {
+                    guard let self, self.usageGate.finish(ticket, sessionID: self.reference?.id ?? "", path: self.selected?.path ?? "") else { return }
+                    guard revision == self.generation, self.allowedVisible else { return }
+                    switch result {
+                    case .success(let (record, date, size)):
+                        self.metricModification = date; self.metricSize = size
+                        if let record {
+                            if self.hintReminderID == ref.id && (self.snapshot?.record.cycleID != record.cycleID || self.snapshot?.record.taskID != record.taskID || record.taskAborted || record.awaitingBaseline || record.hasReadGap || (record.metrics?.contextPercent ?? 0) < 70) { self.dismissHint() }
+                            self.snapshot = UsageSnapshot(reference: ref, record: record)
+                            var state = self.reminderStates[ref.id] ?? ReminderState(); let old = state
+                            state.observe(record, now: Date(), enabled: self.alertsEnabled)
+                            self.reminderStates[ref.id] = state
+                            if state != old { self.saveReminders() }
+                        }
+                        self.renderMetrics()
+                    case .failure(let error):
+                        self.resetSnapshot(); self.clearDisplay(L("记录读取失败")); self.session.toolTip = error.localizedDescription
+                    }
+                }
             }
-            guard let snapshot, let m = snapshot.metrics else { clearDisplay(L("等待用量数据")); return }
-            tokens.title = "\(short(m.total)) tok"; cache.title = L("缓存 {0}", String(describing: percent(m.cachePercent))); context.title = L("上下文≈{0}", String(describing: percent(m.contextPercent)))
-            let tier = ReminderPolicy.tier(for: m.contextPercent ?? 0)
-            context.contentTintColor = tier >= ReminderPolicy.secondTier ? .systemRed : tier >= ReminderPolicy.firstTier ? .systemOrange : .secondaryLabelColor
-            let status = followEnabled ? followStatus : L("固定监控：{0}", String(describing: snapshot.reference.title))
-            let time = L("记录 {0}{1}", String(describing: timestampLabel(m.timestamp)), String(describing: (m.date.map { Date().timeIntervalSince($0) > 120 } ?? true) ? L("（历史快照）") : ""))
-            for button in [tokens, cache, context, session] { button.toolTip = L("{0}\n{1}\n点击查看详情 · 监控不调用模型", String(describing: status), String(describing: time)) }
-            UserDefaults.standard.set(snapshot.reference.id, forKey: "monitoredChatDiagnostic")
-            UserDefaults.standard.set(m.timestamp, forKey: "usageTimestampDiagnostic")
-            maybeRemind(snapshot)
-        } catch { resetSnapshot(); clearDisplay(L("记录读取失败")); session.toolTip = error.localizedDescription }
+        }
+        renderMetrics()
+    }
+    func renderMetrics() {
+        guard let snapshot else { clearDisplay(L("等待用量数据")); return }
+        guard let m = snapshot.metrics else {
+            clearDisplay(snapshot.record.hasReadGap ? L("日志状态不完整，暂停提醒") : snapshot.record.awaitingBaseline ? L("已确认压缩，等待基线") : L("等待用量数据")); return
+        }
+        tokens.title = m.total.map { "\(short($0)) tok" } ?? L("未记录"); cache.title = L("缓存 {0}", String(describing: percent(m.cachePercent))); context.title = L("上下文≈{0}", String(describing: percent(m.contextPercent)))
+        let tier = ReminderPolicy.tier(for: m.contextPercent ?? 0)
+        context.contentTintColor = tier >= ReminderPolicy.secondTier ? .systemRed : tier >= ReminderPolicy.firstTier ? .systemOrange : .secondaryLabelColor
+        let status = followEnabled ? followStatus : L("固定监控：{0}", String(describing: snapshot.reference.title))
+        let time = L("记录 {0}{1}", String(describing: timestampLabel(m.timestamp)), String(describing: (m.date.map { Date().timeIntervalSince($0) > 120 } ?? true) ? L("（历史快照）") : ""))
+        for button in [tokens, cache, context, session] { button.toolTip = L("{0}\n{1}\n点击查看详情 · 监控不调用模型", String(describing: status), String(describing: time)) }
+        UserDefaults.standard.set(snapshot.reference.id, forKey: "monitoredChatDiagnostic")
+        UserDefaults.standard.set(m.timestamp, forKey: "usageTimestampDiagnostic")
+        if hintReminderID != nil && !ReminderPolicy.keepsHint(snapshot.record, eventID: hintUsageEventID, now: Date()) { dismissHint() }
+        maybeRemind(snapshot)
     }
     func saveReminders() { if let data = try? JSONEncoder().encode(reminderStates) { UserDefaults.standard.set(data, forKey: "contextReminderStates") } }
     func maybeRemind(_ snapshot: UsageSnapshot) {
         guard !suppressReminders, allowedVisible, hint == nil, detail?.isShown != true, chatPicker?.window?.isVisible != true,
-              let tier = reminderStates[snapshot.reference.id]?.ready(snapshot.record, now: Date(), enabled: alertsEnabled) else { return }
+              let tier = reminderStates[snapshot.reference.id]?.ready(snapshot.record, now: Date(), enabled: alertsEnabled), ReminderPolicy.presentsHint(tier: tier) else { return }
         reminderStates[snapshot.reference.id]?.presented(tier); saveReminders()
-        let views: [NSView] = [textLabel(L("上下文估算达到 {0}%", String(describing: tier)), bold: true), textLabel(L("{0}\n本轮任务已结束。可在合适阶段准备交接，为整理材料预留空间；估算值不代表必须换聊天。", String(describing: snapshot.reference.title))), commandButtons(snapshot), ActionButton(L("稍后")) { [weak self] in self?.dismissHint() }]
-        showHint(views); hintReminderID = snapshot.reference.id
+        let views: [NSView] = [textLabel(L("建议准备交接"), bold: true), textLabel(L("当前上下文估算已达到 70%。如果当前任务阶段已经完成，建议整理工作进度并准备开启新会话，以减少无关历史上下文的影响。\n\n如果任务仍需连续执行，可以继续工作，Codex 也可能自动压缩上下文。")), commandButtons(snapshot, prominent: true), ActionButton(L("暂不交接")) { [weak self] in self?.dismissHint() }]
+        showHint(views); hintReminderID = snapshot.reference.id; hintUsageEventID = snapshot.metrics?.eventID ?? ""
     }
     func showHint(_ views: [NSView]) {
         dismissHint()
@@ -254,7 +325,7 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let y = below >= screen.minY ? below : min(screen.maxY - window.frame.height, panel.frame.maxY + 8)
         window.setFrameOrigin(NSPoint(x: x, y: y)); hint = window; window.orderFrontRegardless()
     }
-    func dismissHint() { hint?.orderOut(nil); hint = nil; hintReminderID = nil }
+    func dismissHint() { hint?.orderOut(nil); hint = nil; hintReminderID = nil; hintUsageEventID = "" }
     func notice(_ message: String) {
         showHint([textLabel(message), ActionButton(L("知道了")) { [weak self] in self?.dismissHint() }])
     }
@@ -271,27 +342,34 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if sender.tag == 0 {
             let a = m.cumulative
             views.append(textLabel(L("累计处理：{0} tok\n输入：{1}（其中缓存 {2}）\n输出：{3}（其中思考 {4}）", String(describing: number(a.total)), String(describing: number(a.input)), String(describing: number(a.cached)), String(describing: number(a.output)), String(describing: number(a.reasoning)))))
-            if let b = m.last { views.append(textLabel(L("最近请求：{0} tok\n输入：{1}（其中缓存 {2}）\n输出：{3}（其中思考 {4}）", String(describing: number(b.total)), String(describing: number(b.input)), String(describing: number(b.cached)), String(describing: number(b.output)), String(describing: number(b.reasoning))))) }
+            if m.kind == .request, let b = m.last { views.append(textLabel(L("最近请求：{0} tok\n输入：{1}（其中缓存 {2}）\n输出：{3}（其中思考 {4}）", String(describing: number(b.total)), String(describing: number(b.input)), String(describing: number(b.cached)), String(describing: number(b.output)), String(describing: number(b.reasoning))))) }
             views.append(textLabel(L("总量为输入 + 输出。缓存计入输入；思考计入输出，不重复相加。累计包含重复发送的上下文，不等于费用或上下文长度。")))
         } else if sender.tag == 1 {
             views.append(textLabel(L("累计缓存命中率：{0}\n缓存输入 {1} ÷ 全部输入 {2} × 100%", String(describing: percent(m.cachePercent)), String(describing: number(m.cached)), String(describing: number(m.input)))))
-            if let b = m.last { views.append(textLabel(L("最近请求：缓存 {0} / 输入 {1}\n命中率 {2}", String(describing: number(b.cached)), String(describing: number(b.input)), String(describing: percent(b.input > 0 ? b.cached / b.input * 100 : nil))))) }
+            if m.kind == .request, let b = m.last { views.append(textLabel(L("最近请求：缓存 {0} / 输入 {1}\n命中率 {2}", String(describing: number(b.cached)), String(describing: number(b.input)), String(describing: percent(b.cachePercent))))) }
             views.append(textLabel(L("只统计输入缓存命中，不含输出，也不是价格折扣比例。输入为零时不计算。")))
         } else {
-            views.append(textLabel(L("估算占用：{0}\n最近请求总 token {1} ÷ 记录的窗口容量 {2}", String(describing: percent(m.contextPercent)), String(describing: number(m.recent)), String(describing: number(m.capacity)))))
-            views.append(textLabel(L("最近请求包含输入和输出。这是本地记录的估算，压缩或请求完成后可能变化；不作为必须换聊天的判断。")))
+            views.append(textLabel(L("估算占用：{0}\n记录的上下文总 token {1} ÷ 窗口容量 {2}", String(describing: percent(m.contextPercent)), String(describing: number(m.recent)), String(describing: number(m.capacity)))))
+            views.append(textLabel(L("普通请求包含输入和输出；压缩基线单独标记。数据缺失时不估算，不作为必须换聊天的判断。")))
+            if (m.contextPercent ?? 0) >= 65 { views.append(textLabel(L("可在合适阶段准备交接。65% / 70% 是经验性提醒阈值，不是经过验证的最佳成本切换点；仍可继续工作。"))) }
             views.append(commandButtons(snapshot))
         }
+        if snapshot.record.compactionConfirmed { views.append(textLabel(L("已确认压缩（自动／手动未知）"))) }
+        if m.kind == .compactionBaseline { views.append(textLabel(L("压缩后上下文基线：{0} tok；不是普通请求，输入／输出细分不适用。", String(describing: number(m.recent))))) }
+        if m.kind == .awaitingBaseline { views.append(textLabel(L("已确认压缩，等待有效上下文基线。"))) }
+        if m.kind == .unknown { views.append(textLabel(L("用量口径未知，暂不估算上下文或触发提醒。"))) }
+        if snapshot.record.hasReadGap { views.append(textLabel(L("日志存在无法解析或超大记录，状态不完整；暂停提醒。"))) }
         views.append(textLabel(L("账号额度 · 会话历史快照"), bold: true))
-        views.append(textLabel(L("5 小时剩余：{0}\n每周剩余：{1}\n来源：此聊天的 token_count / rate_limits\n采集时间：{2}\n非实时余额；账号共享额度可能已变化。", String(describing: remaining(m, "primary")), String(describing: remaining(m, "secondary")), String(describing: timestampLabel(m.timestamp)))))
+        views.append(textLabel(L("5 小时剩余：{0}\n每周剩余：{1}\n来源：此聊天的 token_count / rate_limits\n采集时间：{2}\n非实时余额；账号共享额度可能已变化。", String(describing: remaining(m, "primary")), String(describing: remaining(m, "secondary")), String(describing: timestampLabel(m.limitsTimestamp)))))
         let controller = NSViewController(); controller.view = cardView(views)
         let popover = NSPopover(); popover.behavior = .transient; popover.animates = false
         popover.contentViewController = controller; popover.contentSize = controller.view.fittingSize; detail = popover
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
     }
-    func commandButtons(_ source: UsageSnapshot) -> NSView {
+    func commandButtons(_ source: UsageSnapshot, prominent: Bool = false) -> NSView {
         let name = source.reference.title.count > 16 ? String(source.reference.title.prefix(16)) + "…" : source.reference.title
-        let handoff = ActionButton(L("准备交接 · {0}", String(describing: name))) { [weak self] in self?.prepare(.handoff, source: source) }
+        let handoff = ActionButton(prominent ? L("准备交接") : L("准备交接 · {0}", String(describing: name))) { [weak self] in self?.prepare(.handoff, source: source) }
+        if prominent { handoff.font = .systemFont(ofSize: 13, weight: .semibold); handoff.bezelColor = .controlAccentColor }
         let reason = PreparedAction.disabledReason(source.reference)
         for button in [handoff] { button.isEnabled = reason == nil; button.toolTip = reason ?? L("目标：{0}\n目录：{1}\n复制指令并返回此聊天；由你粘贴后发送。", String(describing: source.reference.title), String(describing: source.reference.cwd)) }
         let row = NSStackView(views: [handoff]); row.orientation = .vertical; row.alignment = .leading; row.spacing = 6
@@ -315,6 +393,7 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         notice(reason)
     }
     @objc func returnToSource() { if let url = lastSource?.url { _ = NSWorkspace.shared.open(url) } }
+    @objc func showStatusMenu() { showMenu() }
     @objc func showMenu() {
         panel.alphaValue = 0.94; detail?.close(); dismissHint()
         let menu = NSMenu()
@@ -325,9 +404,11 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(.separator()); _ = add(followEnabled ? followStatus : L("固定监控：{0}", String(describing: chosenTitle)), nil, enabled: false)
         if let m = snapshot?.metrics { _ = add(L("记录：{0} · 非实时余额", String(describing: timestampLabel(m.timestamp))), nil, enabled: false) }
         let follow = add(L("自动跟随当前聊天"), #selector(toggleFollowing)); follow.state = followEnabled ? .on : .off
+        let login = add(L("登录后自动启动"), #selector(toggleLogin)); login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        if SMAppService.mainApp.status == .requiresApproval { _ = add(L("登录项需系统批准…"), #selector(openLoginSettings)) }
         let alerts = add(L("交接轻提醒（65% / 70%）"), #selector(toggleAlerts)); alerts.state = alertsEnabled ? .on : .off
         if let source = lastSource { _ = add(L("返回上次交接来源 · {0}", String(describing: source.title)), #selector(returnToSource), enabled: source.url != nil) }
-        if !UserDefaults.standard.bool(forKey: "followAccessConfirmed") || !AXIsProcessTrusted() { _ = add(L("检查自动跟随权限…"), #selector(requestFollowingAccess)) }
+        if !AXIsProcessTrusted() { _ = add(L("检查自动跟随权限…"), #selector(requestFollowingAccess)) }
         _ = add(L("手动选择记录文件…"), #selector(choose)); _ = add(L("查看指标说明"), #selector(explain))
         let opacity = add(L("透明度"), nil); let choices = NSMenu()
         for (title, value) in [(L("更淡（30%）"), 30), (L("轻淡（42%）"), 42), (L("清晰（65%）"), 65)] {
@@ -345,7 +426,21 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         language.submenu = languages
         menu.addItem(.separator()); _ = add(L("关闭小窗"), #selector(closeApp))
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: session.bounds.minY), in: session); panel.alphaValue = idleOpacity
+        if !allowedVisible, let button = statusItem?.button { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button) }
+        else { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: session.bounds.minY), in: session) }
+        panel.alphaValue = idleOpacity
+    }
+    @objc func openLoginSettings() { SMAppService.openSystemSettingsLoginItems() }
+    @objc func toggleLogin() { configureLogin(enabled: SMAppService.mainApp.status == .notRegistered || SMAppService.mainApp.status == .notFound) }
+    func configureLogin(enabled: Bool) {
+        if enabled && SMAppService.mainApp.status == .enabled { return }
+        if !enabled && SMAppService.mainApp.status == .notRegistered { return }
+        do {
+            if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+            if SMAppService.mainApp.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+        } catch {
+            let alert = NSAlert(); alert.messageText = L("无法更改登录项"); alert.informativeText = error.localizedDescription; alert.runModal()
+        }
     }
     @objc func setLanguage(_ sender: NSMenuItem) {
         guard let code = sender.representedObject as? String, let next = AppLanguage(rawValue: code), next != AppLanguage.current else { return }
@@ -381,6 +476,7 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for id in reminderStates.keys { reminderStates[id]?.pendingTier = 0 }; saveReminders()
     }
     @objc func requestFollowingAccess() {
+        if AXIsProcessTrusted() { foregroundChanged(); return }
         let alert = NSAlert(); alert.messageText = L("允许小窗识别当前聊天")
         alert.informativeText = L("辅助功能权限允许应用读取界面并具备控制能力。小窗仅读取 Codex 当前窗口标题与顶部会话信息，匹配本地记录；不会点击、输入或上传内容。\n请在系统设置中为当前这份“Codex实时状态栏”启用权限。")
         alert.addButton(withTitle: L("打开系统设置")); alert.addButton(withTitle: L("取消"))

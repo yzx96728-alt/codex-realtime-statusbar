@@ -29,7 +29,7 @@ cp Resources/AppIcon.icns "$DIST_DIR/$APP_NAME.app/Contents/Resources/AppIcon.ic
 mkdir -p "$DIST_DIR/$APP_NAME.app/Contents/Resources/Localization"
 cp Resources/Localization/en.json "$DIST_DIR/$APP_NAME.app/Contents/Resources/Localization/en.json"
 cp -R Resources/en.lproj Resources/zh-Hans.lproj "$DIST_DIR/$APP_NAME.app/Contents/Resources/"
-codesign --force --sign - --identifier "$BUNDLE_ID" "$DIST_DIR/$APP_NAME.app"
+codesign --force --sign "${SIGNING_IDENTITY:--}" --identifier "$BUNDLE_ID" "$DIST_DIR/$APP_NAME.app"
 codesign --verify --deep --strict --verbose=2 "$DIST_DIR/$APP_NAME.app"
 lipo -info "$DIST_DIR/$APP_NAME.app/Contents/MacOS/CCUsage"
 echo "Built: $PROJECT_ROOT/$DIST_DIR/$APP_NAME.app"

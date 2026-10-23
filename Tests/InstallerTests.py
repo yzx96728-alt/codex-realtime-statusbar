@@ -26,8 +26,29 @@ class InstallerTests(unittest.TestCase):
     def existing(self, base, folder="handoff"):
         target = self.user / base / folder
         shutil.copytree(SOURCE, target)
+        (target / "SKILL.md").write_text((target / "SKILL.md").read_text() + "\nUser customization\n")
         (target / "local-only.txt").write_text("old personal setting")
         return target
+
+    def test_custom_codex_directory(self):
+        custom = self.directory / "custom codex with spaces"
+        target = custom / "skills/renamed-handoff"
+        shutil.copytree(SOURCE, target)
+        result = self.run_install("--codex-home", str(custom))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(str(target), result.stdout)
+        self.assertIn("skipped", result.stdout)
+        self.assertFalse((self.user / ".agents").exists())
+
+    def test_identical_skips_without_backup(self):
+        target = self.user / ".codex/skills/handoff"
+        shutil.copytree(SOURCE, target)
+        (target / "extra.txt").write_text("keep")
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("skipped", result.stdout)
+        self.assertTrue((target / "extra.txt").exists())
+        self.assertFalse((self.user / ".codex-handoff-backups").exists())
 
     def test_new_install_and_spaces(self):
         result = self.run_install()

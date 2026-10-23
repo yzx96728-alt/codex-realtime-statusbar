@@ -1,5 +1,7 @@
 # Codex Live Status Bar
 
+**v1.7.2** adds a unified installer, native start-at-login and a 70% handoff hint. See [validation and remaining system-test limits](docs/v1.7.2-validation.md).
+
 [简体中文](README.md) · English
 
 <img src="Resources/icons/AppIcon.png" alt="Codex Live Status Bar icon" width="96" height="96">
@@ -10,16 +12,16 @@ A small, translucent macOS panel for local Codex chat usage. **Monitoring does n
 
 - Follow the active Codex chat, or search by name and pin monitoring. Recent chats are not expanded in the menu.
 - Click metrics for cumulative/latest tokens, cache-hit calculations and estimated context usage.
-- Quiet 65% / 70% context alerts after a real task-completion event; no sound or input focus.
+- Orange context at65% with guidance on click; a prominent nonactivating handoff hint at70% after normal completion.
 - Copy a handoff instruction and return to its target chat. You paste and send it.
 - Hide outside Codex and refresh the target before showing again.
 - Remember language, opacity, window position, alert state and the last prepared handoff source.
 
 ## Download and setup
 
-Download `CodexRealtimeStatusbar-v1.7-macOS-universal.zip` from [Releases](https://github.com/yzx96728-alt/codex-realtime-statusbar/releases/latest), then extract the app.
+Download `CodexRealtimeStatusbar-v1.7.2-macOS-universal.zip` from [Releases](https://github.com/yzx96728-alt/codex-realtime-statusbar/releases/latest), then extract the app.
 
-1. Keep the app in a stable location, such as Applications, and launch it.
+1. Extract the complete ZIP and double-click `安装或升级.command` (Install or Upgrade). It integrates app and skill, validates backups and supports rollback. Identical skills are skipped; changes require confirmation, duplicate skills pause the update.
 2. Open `⋯ → 语言 / Language → English`. Changes apply immediately and persist across restarts.
 3. Enable **Follow current chat** and grant Accessibility permission to this copy of the app in **System Settings → Privacy & Security → Accessibility**.
 4. Switch chats in Codex. `↪` means follow; `⌖` means pinned. Click any metric for details.
@@ -36,7 +38,7 @@ The universal build includes Apple Silicon and Intel code, with a macOS13 deploy
 | --- | --- |
 | Tokens | Cumulative input + output, including repeated context. Cached tokens are part of input; reasoning is part of output. Do not add these subsets again. |
 | Cache | Cumulative cached input / all input. Latest-request details are also available. |
-| Context≈ | Latest request’s total tokens / recorded context-window capacity. An estimate, not a live official value. |
+| Context≈ | Ordinary-request total or confirmed compaction baseline / recorded capacity. Missing or unknown data is not estimated. |
 | Account limits | Timestamped historical data from the selected chat’s usage event. Shared account usage may have changed. Not a live balance or bill. |
 
 Existing snapshots do not trigger alerts on first observation. Only new usage records no older than two minutes can qualify. Alerts wait for a real `task_complete` event; unknown/running tasks do not count as complete. Each tier is deduplicated per chat across restarts; dropping below55% rearms it. A jump across both tiers shows only the highest current tier.
@@ -55,7 +57,7 @@ No screenshots, OCR, uploads, background model processes or new services. Settin
 
 Codex’s local index/event format may change and require updates. This version does not hide specifically for internal Codex home/settings pages. Codex handles automatic compaction; the bar does not change its settings or offer a manual compact button.
 
-The v1.7 download includes the app, handoff skill and installer; its exact size is shown on the release page (the app is about1MB unpacked). It is separate from **GitHub Desktop**, whose installer is hundreds of MB. GitHub Desktop does not need to run while using the status bar.
+The v1.7.2 download includes the app, handoff skill and installer; its exact size is shown on the release page (the app is about1MB unpacked). It is separate from **GitHub Desktop**, whose installer is hundreds of MB. GitHub Desktop does not need to run while using the status bar.
 
 ## Build
 
@@ -78,4 +80,6 @@ Icon sources live in `Resources/icons/`; `scripts/make-icon.swift` generates the
 
 A bare `$handoff` saves progress only. Explicitly request saving, creating/opening a fresh chat in the original directory and continuing for a complete handoff. Without chat-management tools, the skill provides material and an opening prompt for manual continuation. Plan mode plans without writing or creating chats. The instruction-only skill works independently of this macOS app and follows the user’s language.
 
-Alerts begin at65%, then70%, leaving room to prepare notes at a suitable stopping point. Below55% re-arms the cycle. These are product defaults, not official quality or cost boundaries. Upgrades map legacy80%/90% history to65%/70%, discard pending alerts, and baseline the first read.
+At65%, only color and click-through guidance change. At70%, fresh eligible usage and normal completion can show a handoff hint. Compaction and cancellation invalidate old hints; duplicate broadcasts do not refresh eligibility. Below55% rearms. These are heuristic thresholds, not proven optimal cost switching points.
+
+Choose native start-at-login during installation or in the menu. Manage it in System Settings > General > Login Items (& Extensions). The running monitor waits hidden, stops refresh while hidden, and resumes when Codex is foreground. Deliberate Quit is respected. Opening Codex cannot launch a monitor that is not running. Prefer /Applications; agree explicitly to ~/Applications if needed. No automatic elevation. See [package instructions](docs/INSTALL.en.md).
