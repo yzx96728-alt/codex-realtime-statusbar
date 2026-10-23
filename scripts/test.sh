@@ -16,3 +16,4 @@ swiftc -module-cache-path "$PROJECT_ROOT/build/module-cache" \
     -framework AppKit -framework ApplicationServices -lsqlite3 \
     Sources/Following.swift Sources/UsageCore.swift Sources/Localization.swift Tests/LocalizationTests.swift -o build/tests/localization-tests
 build/tests/localization-tests
+python3 Tests/InstallerTests.py

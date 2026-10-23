@@ -1,0 +1,6 @@
+interface:
+  display_name: "Task handoff / 项目交接"
+  short_description: "Save verified task state and safely resume work in a fresh chat"
+  default_prompt: "Use $handoff to save this task's state, or complete a new-chat handoff when I explicitly request it."
+policy:
+  allow_implicit_invocation: true

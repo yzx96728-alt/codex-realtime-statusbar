@@ -43,7 +43,6 @@ import Foundation
         let ref = SessionReference(id: "11111111-1111-4111-8111-111111111111", title: title, path: "/tmp/test.jsonl", cwd: "/private/tmp")
         let english = PreparedAction.handoff.command(for: ref, language: .english)
         for required in ["$handoff", "permission boundaries", "original working directory", "Create and open", "read-only", "Preserve the source chat", "Plan", ref.id, ref.cwd, "原聊天"] { assert(english.contains(required), required) }
-        assert(PreparedAction.compact.command(for: ref, language: .english) == "/compact")
-        print("Passed: full English coverage; interpolation safety; language persistence and fallback; English handoff boundaries; unchanged compact command.")
+        print("Passed: full English coverage; interpolation safety; language persistence and fallback; English handoff boundaries; manual handoff fallback.")
     }
 }

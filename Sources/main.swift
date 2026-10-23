@@ -218,11 +218,12 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let old = state
                 state.observe(record, now: Date(), enabled: alertsEnabled)
                 reminderStates[ref.id] = state
-                if state.lastEvent != old.lastEvent { saveReminders() }
+                if state != old { saveReminders() }
             }
             guard let snapshot, let m = snapshot.metrics else { clearDisplay(L("等待用量数据")); return }
             tokens.title = "\(short(m.total)) tok"; cache.title = L("缓存 {0}", String(describing: percent(m.cachePercent))); context.title = L("上下文≈{0}", String(describing: percent(m.contextPercent)))
-            context.contentTintColor = (m.contextPercent ?? 0) >= 90 ? .systemRed : (m.contextPercent ?? 0) >= 80 ? .systemOrange : .secondaryLabelColor
+            let tier = ReminderPolicy.tier(for: m.contextPercent ?? 0)
+            context.contentTintColor = tier >= ReminderPolicy.secondTier ? .systemRed : tier >= ReminderPolicy.firstTier ? .systemOrange : .secondaryLabelColor
             let status = followEnabled ? followStatus : L("固定监控：{0}", String(describing: snapshot.reference.title))
             let time = L("记录 {0}{1}", String(describing: timestampLabel(m.timestamp)), String(describing: (m.date.map { Date().timeIntervalSince($0) > 120 } ?? true) ? L("（历史快照）") : ""))
             for button in [tokens, cache, context, session] { button.toolTip = L("{0}\n{1}\n点击查看详情 · 监控不调用模型", String(describing: status), String(describing: time)) }
@@ -236,7 +237,7 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard !suppressReminders, allowedVisible, hint == nil, detail?.isShown != true, chatPicker?.window?.isVisible != true,
               let tier = reminderStates[snapshot.reference.id]?.ready(snapshot.record, now: Date(), enabled: alertsEnabled) else { return }
         reminderStates[snapshot.reference.id]?.presented(tier); saveReminders()
-        let views: [NSView] = [textLabel(L("上下文估算达到 {0}%", String(describing: tier)), bold: true), textLabel(L("{0}\n本轮任务已结束。可按需要压缩或交接；估算值不代表必须换聊天。", String(describing: snapshot.reference.title))), commandButtons(snapshot), ActionButton(L("稍后")) { [weak self] in self?.dismissHint() }]
+        let views: [NSView] = [textLabel(L("上下文估算达到 {0}%", String(describing: tier)), bold: true), textLabel(L("{0}\n本轮任务已结束。可在合适阶段准备交接，为整理材料预留空间；估算值不代表必须换聊天。", String(describing: snapshot.reference.title))), commandButtons(snapshot), ActionButton(L("稍后")) { [weak self] in self?.dismissHint() }]
         showHint(views); hintReminderID = snapshot.reference.id
     }
     func showHint(_ views: [NSView]) {
@@ -290,11 +291,10 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     func commandButtons(_ source: UsageSnapshot) -> NSView {
         let name = source.reference.title.count > 16 ? String(source.reference.title.prefix(16)) + "…" : source.reference.title
-        let compact = ActionButton(L("复制压缩命令")) { [weak self] in self?.prepare(.compact, source: source) }
         let handoff = ActionButton(L("准备交接 · {0}", String(describing: name))) { [weak self] in self?.prepare(.handoff, source: source) }
         let reason = PreparedAction.disabledReason(source.reference)
-        for button in [compact, handoff] { button.isEnabled = reason == nil; button.toolTip = reason ?? L("目标：{0}\n目录：{1}\n复制指令并返回此聊天；由你粘贴后发送。", String(describing: source.reference.title), String(describing: source.reference.cwd)) }
-        let row = NSStackView(views: [compact, handoff]); row.orientation = .vertical; row.alignment = .leading; row.spacing = 6
+        for button in [handoff] { button.isEnabled = reason == nil; button.toolTip = reason ?? L("目标：{0}\n目录：{1}\n复制指令并返回此聊天；由你粘贴后发送。", String(describing: source.reference.title), String(describing: source.reference.cwd)) }
+        let row = NSStackView(views: [handoff]); row.orientation = .vertical; row.alignment = .leading; row.spacing = 6
         let stack = NSStackView(views: [row, textLabel(reason ?? L("目标：{0}\n目录：{1}", String(describing: source.reference.title), String(describing: source.reference.cwd)))]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 6
         return stack
     }
@@ -305,11 +305,11 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let board = NSPasteboard.general; board.clearContents()
             let command = action.command(for: target)
             guard board.setString(command, forType: .string), board.string(forType: .string) == command else { notice(L("剪贴板写入失败，请重试。")); return }
-            if action == .handoff { lastSource = HandoffSource(target); if let data = try? JSONEncoder().encode(lastSource) { UserDefaults.standard.set(data, forKey: "lastHandoffSource") } }
+            lastSource = HandoffSource(target); if let data = try? JSONEncoder().encode(lastSource) { UserDefaults.standard.set(data, forKey: "lastHandoffSource") }
             detail?.close(); dismissHint()
             let opened = NSWorkspace.shared.open(url)
-            UserDefaults.standard.set(["id": target.id, "action": action == .handoff ? "handoff" : "compact", "clipboardVerified": true, "linkOpened": opened] as [String: Any], forKey: "preparedActionDiagnostic")
-            notice(L("{0}\n指令已复制，按 ⌘V 后发送。{1}\n{2}", String(describing: target.title), String(describing: opened ? "" : L("\n未能打开聊天链接，请手动返回此聊天。")), String(describing: action == .handoff ? L("尚未交接；由 Codex 按 handoff 流程执行。") : L("尚未压缩；发送后由 Codex 执行。"))))
+            UserDefaults.standard.set(["id": target.id, "action": "handoff", "clipboardVerified": true, "linkOpened": opened] as [String: Any], forKey: "preparedActionDiagnostic")
+            notice(L("{0}\n指令已复制，按 ⌘V 后发送。{1}\n{2}", String(describing: target.title), String(describing: opened ? "" : L("\n未能打开聊天链接，请手动返回此聊天。")), String(describing: L("尚未交接；由 Codex 按 handoff 流程执行。"))))
             return
         }
         notice(reason)
@@ -325,7 +325,7 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(.separator()); _ = add(followEnabled ? followStatus : L("固定监控：{0}", String(describing: chosenTitle)), nil, enabled: false)
         if let m = snapshot?.metrics { _ = add(L("记录：{0} · 非实时余额", String(describing: timestampLabel(m.timestamp))), nil, enabled: false) }
         let follow = add(L("自动跟随当前聊天"), #selector(toggleFollowing)); follow.state = followEnabled ? .on : .off
-        let alerts = add(L("上下文轻提醒（80% / 90%）"), #selector(toggleAlerts)); alerts.state = alertsEnabled ? .on : .off
+        let alerts = add(L("交接轻提醒（65% / 70%）"), #selector(toggleAlerts)); alerts.state = alertsEnabled ? .on : .off
         if let source = lastSource { _ = add(L("返回上次交接来源 · {0}", String(describing: source.title)), #selector(returnToSource), enabled: source.url != nil) }
         if !UserDefaults.standard.bool(forKey: "followAccessConfirmed") || !AXIsProcessTrusted() { _ = add(L("检查自动跟随权限…"), #selector(requestFollowingAccess)) }
         _ = add(L("手动选择记录文件…"), #selector(choose)); _ = add(L("查看指标说明"), #selector(explain))
@@ -391,7 +391,7 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
     @objc func choose() {
-        let picker = NSOpenPanel(); picker.title = L("选择 Codex 会话记录"); picker.message = L("选择后固定监控此会话。无法匹配聊天标识或目录时，压缩与交接入口会禁用。")
+        let picker = NSOpenPanel(); picker.title = L("选择 Codex 会话记录"); picker.message = L("选择后固定监控此会话。无法匹配聊天标识或目录时，交接入口会禁用。")
         picker.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions"); picker.canChooseDirectories = false; picker.allowsMultipleSelection = false
         picker.beginSheetModal(for: panel) { [weak self] response in
             guard response == .OK, let url = picker.url, let self else { return }
@@ -400,7 +400,7 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
     @objc func explain() {
-        notice(L("单击 token、缓存或上下文可查看详情。↪ 为自动跟随，⌖ 为固定监控。\n\n上下文是最近请求总 token / 记录容量的估算；账号额度仅为带时间的会话快照。提醒只在新记录达到阈值、真实任务结束后出现。\n\n交接和压缩只复制指令并返回指定聊天，由你粘贴发送。监控仅本地读取，不调用模型；离开 Codex 后隐藏并暂停界面识别。"))
+        notice(L("单击 token、缓存或上下文可查看详情。↪ 为自动跟随，⌖ 为固定监控。\n\n上下文是最近请求总 token / 记录容量的估算；账号额度仅为带时间的会话快照。提醒只在新记录达到阈值、真实任务结束后出现。\n\n交接只复制指令并返回指定聊天，由你粘贴发送。监控仅本地读取，不调用模型；离开 Codex 后隐藏并暂停界面识别。"))
     }
     @objc func closeApp() { NSApp.terminate(nil) }
     func windowWillClose(_ notification: Notification) { if (notification.object as? NSWindow) === panel { closeApp() } }
