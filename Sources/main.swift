@@ -37,8 +37,19 @@ if arguments.contains("--installer-stop"), let path = arguments.last {
     while apps.contains(where: { !$0.isTerminated }) && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
     exit(apps.allSatisfy { $0.isTerminated } ? 0 : 1)
 }
+if arguments.contains("--temperature-check") {
+    let sample = CPUTemperatureReader().read()
+    let result: [String: Any] = ["celsius": sample?.celsius as Any? ?? NSNull(), "sensors": sample?.sensorCount ?? 0, "aggregation": "hottest CPU sensor"]
+    print(String(decoding: try! JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)); exit(0)
+}
 if arguments.contains("--installation-status") {
-    let result: [String: Any] = ["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "unknown", "accessibility_trusted": AXIsProcessTrusted(), "login_status": String(describing: SMAppService.mainApp.status), "login_enabled": SMAppService.mainApp.status == .enabled, "login_requires_approval": SMAppService.mainApp.status == .requiresApproval]
+    let defaults = UserDefaults.standard
+    let live = NSRunningApplication.runningApplications(withBundleIdentifier: "local.cc.codex-usage-monitor").filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }.map { $0.processIdentifier }
+    let pid = (defaults.object(forKey: "guiDiagnosticPID") as? NSNumber)?.int32Value
+    let uptime = defaults.object(forKey: "guiDiagnosticUptime") as? Double
+    let fresh = WindowRecovery.acceptsTrust(pid: pid, livePIDs: live, uptime: uptime, now: ProcessInfo.processInfo.systemUptime)
+    let trust: Any = fresh ? defaults.object(forKey: "guiAccessibilityTrusted") ?? NSNull() : NSNull()
+    let result: [String: Any] = ["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "unknown", "accessibility_trusted": trust, "trust_source": fresh ? "running GUI process" : "unavailable", "probe_accessibility_trusted": AXIsProcessTrusted(), "login_enabled": SMAppService.mainApp.status == .enabled, "login_requires_approval": SMAppService.mainApp.status == .requiresApproval]
     print(String(decoding: try! JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)); exit(0)
 }
 final class FloatingPanel: NSPanel { override var canBecomeKey: Bool { true } }
@@ -98,6 +109,12 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var timer: Timer?, observer: NSObjectProtocol?
     var workspaceObservers: [NSObjectProtocol] = []
     var statusItem: NSStatusItem?
+    var serviceTimer: Timer?
+    var lastForegroundID = ""
+    var temperature: CPUTemperatureSample?
+    var temperatureBusy = false
+    let temperatureQueue = DispatchQueue(label: "local.cc.cpu-temperature", qos: .utility)
+    let temperatureReader = CPUTemperatureReader()
     var selected: URL?, reference: SessionReference?, snapshot: UsageSnapshot?
     var metricModification: Date?
     var metricSize: UInt64?
@@ -146,8 +163,12 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if arguments.contains("--enable-login") { configureLogin(enabled: true) }
         if arguments.contains("--disable-login") { configureLogin(enabled: false) }
         // The menu remains reachable while Codex is absent and the bar is hidden.
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem?.button?.title = "↪"
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem?.button?.image = NSImage(systemSymbolName: "cpu", accessibilityDescription: "CPU")
+        statusItem?.button?.image?.isTemplate = true
+        statusItem?.button?.imagePosition = .imageLeading
+        statusItem?.button?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        statusItem?.button?.title = "—°C"
         statusItem?.button?.target = self; statusItem?.button?.action = #selector(showStatusMenu)
         if let saved = UserDefaults.standard.string(forKey: preferenceKey) { selected = URL(fileURLWithPath: saved) }
         else if let initial = Bundle.main.object(forInfoDictionaryKey: "CCInitialSessionPath") as? String { selected = URL(fileURLWithPath: initial.trimmingCharacters(in: .whitespacesAndNewlines)) }
@@ -181,30 +202,66 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSLayoutConstraint.activate([row.leadingAnchor.constraint(equalTo: surface.leadingAnchor, constant: 8), row.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -7), row.centerYAnchor.constraint(equalTo: surface.centerYAnchor), session.widthAnchor.constraint(equalToConstant: 16), mode.widthAnchor.constraint(equalToConstant: 12)])
         if !panel.setFrameUsingName("CCUsageCompactPanel"), let screen = NSScreen.main { panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.maxX - 364, y: screen.visibleFrame.minY + 12)) }
         observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.foregroundChanged() }
-        for name in [NSWorkspace.didWakeNotification, NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
-            workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.foregroundChanged() })
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                guard (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier == "com.openai.codex" else { return }
+                self?.foregroundChanged()
+            })
         }
+        workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.foregroundChanged(); self?.serviceTick() })
         workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }; self.generation += 1; self.usageGate.invalidate(); self.timer?.invalidate(); self.timer = nil; self.detail?.close(); self.dismissHint(); self.panel.orderOut(nil)
         })
-        foregroundChanged()
+        serviceTimer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in self?.serviceTick() }
+        serviceTimer?.tolerance = 2
+        RunLoop.main.add(serviceTimer!, forMode: .common)
+        foregroundChanged(); serviceTick()
+    }
+    func recordRuntimeStatus() {
+        UserDefaults.standard.set(AXIsProcessTrusted(), forKey: "guiAccessibilityTrusted")
+        UserDefaults.standard.set(ProcessInfo.processInfo.processIdentifier, forKey: "guiDiagnosticPID")
+        UserDefaults.standard.set(ProcessInfo.processInfo.systemUptime, forKey: "guiDiagnosticUptime")
+    }
+    func serviceTick() {
+        recordRuntimeStatus()
+        if lastForegroundID != frontID { foregroundChanged() }
+        updateTemperatureDisplay()
+        guard !temperatureBusy else { return }
+        temperatureBusy = true
+        temperatureQueue.async { [weak self] in
+            guard let self else { return }; let sample = self.temperatureReader.read()
+            DispatchQueue.main.async { self.temperatureBusy = false; self.temperature = sample; self.updateTemperatureDisplay() }
+        }
+    }
+    func updateTemperatureDisplay() {
+        let valid = temperature.flatMap { $0.isFresh(at: Date()) ? $0 : nil }
+        statusItem?.button?.title = valid.map { "\(Int($0.celsius.rounded()))°C" } ?? "—°C"
+        statusItem?.button?.toolTip = valid.map { L("CPU传感器最高温度：{0}°C（{1}个传感器）；每10秒刷新。", String(format: "%.1f", $0.celsius), String($0.sensorCount)) } ?? L("CPU温度暂不可用；点击打开小窗菜单。")
     }
     func foregroundChanged() {
+        lastForegroundID = frontID; recordRuntimeStatus()
         generation += 1; usageGate.invalidate()
         timer?.invalidate(); timer = nil
-        if allowedVisible { timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.refresh() } }
+        if allowedVisible {
+            timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.refresh() }
+            timer?.tolerance = 0.2; RunLoop.main.add(timer!, forMode: .common)
+        }
         if !allowedVisible {
             restorePicker = chatPicker?.window?.isVisible == true
             detail?.close(); dismissHint(); chatPicker?.window?.orderOut(nil); panel.orderOut(nil)
             UserDefaults.standard.set("hidden", forKey: "visibilityDiagnostic")
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastHiddenAt")
         } else if isCodex {
-            // A fresh identity check completes before restoring the bar.
-            panel.orderOut(nil); UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastCodexReturnAt"); refresh()
+            // Show an explicitly pending shell instead of waiting invisibly for AX/catalog work.
+            detail?.close(); dismissHint()
+            if followEnabled { resetSnapshot(); clearDisplay(L("正在识别聊天")) }
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastCodexReturnAt")
+            reveal(); refresh()
         } else { reveal() }
     }
     func reveal() {
         guard allowedVisible else { return }
+        panel.setFrame(WindowRecovery.frame(panel.frame, visibleScreens: NSScreen.screens.map { $0.visibleFrame }), display: true)
         panel.orderFrontRegardless()
         if restorePicker { chatPicker?.window?.orderFrontRegardless(); restorePicker = false }
         UserDefaults.standard.set("visible", forKey: "visibilityDiagnostic")
@@ -393,6 +450,11 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         notice(reason)
     }
     @objc func returnToSource() { if let url = lastSource?.url { _ = NSWorkspace.shared.open(url) } }
+    @objc func recoverPanel() {
+        if let screen = NSScreen.main { panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.maxX - panel.frame.width - 16, y: screen.visibleFrame.minY + 12)) }
+        if let codex = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first { codex.activate(options: []) }
+        foregroundChanged()
+    }
     @objc func showStatusMenu() { showMenu() }
     @objc func showMenu() {
         panel.alphaValue = 0.94; detail?.close(); dismissHint()
@@ -400,6 +462,9 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         func add(_ title: String, _ selector: Selector?, enabled: Bool = true) -> NSMenuItem {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: ""); item.target = self; item.isEnabled = enabled; menu.addItem(item); return item
         }
+        _ = add(L("显示／找回小窗"), #selector(recoverPanel))
+        let temp = temperature.flatMap { $0.isFresh(at: Date()) ? $0 : nil }
+        _ = add(temp.map { L("CPU最高温度：{0}°C", String(format: "%.1f", $0.celsius)) } ?? L("CPU温度不可用（不支持或读取失败）"), nil, enabled: false)
         _ = add(L("搜索聊天名称…"), #selector(searchChats))
         menu.addItem(.separator()); _ = add(followEnabled ? followStatus : L("固定监控：{0}", String(describing: chosenTitle)), nil, enabled: false)
         if let m = snapshot?.metrics { _ = add(L("记录：{0} · 非实时余额", String(describing: timestampLabel(m.timestamp))), nil, enabled: false) }
@@ -447,7 +512,7 @@ final class Monitor: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let reopenPicker = chatPicker?.window?.isVisible == true
         generation += 1; detail?.close(); dismissHint(); chatPicker?.close()
         suppressReminders = true
-        next.save()
+        next.save(); updateTemperatureDisplay()
         panel.title = L("Codex实时状态栏")
         followStatus = followEnabled && reference != nil ? L("自动跟随：{0}", reference!.title) : L("等待识别当前聊天")
         clearDisplay(followEnabled ? L("正在识别聊天") : L("等待用量数据"))

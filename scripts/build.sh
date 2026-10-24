@@ -14,7 +14,7 @@ for architecture in $ARCHITECTURES; do
     swiftc -O -target "$architecture-apple-macos$MACOS_MIN_VERSION" \
         -module-cache-path "$PROJECT_ROOT/build/module-cache" \
         -framework AppKit -framework ApplicationServices -lsqlite3 \
-        Sources/main.swift Sources/Following.swift Sources/ChatPicker.swift Sources/UsageCore.swift Sources/Localization.swift \
+        Sources/CPUTemperature.swift Sources/WindowState.swift Sources/main.swift Sources/Following.swift Sources/ChatPicker.swift Sources/UsageCore.swift Sources/Localization.swift \
         -o "build/bin/CCUsage-$architecture"
     BINARIES+=("build/bin/CCUsage-$architecture")
 done

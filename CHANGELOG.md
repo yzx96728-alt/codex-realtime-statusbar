@@ -1,5 +1,11 @@
 # 更新记录
 
+## 1.7.3
+
+- Restore the panel independently of asynchronous chat recognition; add an explicit recovery action and off-screen recovery.
+- Separate live GUI Accessibility trust from command-line probe status, with PID and freshness checks.
+- Replace the menu-bar arrow with a native CPU icon and read-only hottest CPU sensor temperature; unknown and stale values show unavailable.
+
 ## 1.7.2
 
 - 保留1.7.1全部统计及事件修复；65%仅变色并在详情提供建议，70%正常完成后显示突出但不抢焦点的交接提示，过期／压缩／取消及时关闭。

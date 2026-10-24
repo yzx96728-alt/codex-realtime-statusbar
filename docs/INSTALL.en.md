@@ -1,4 +1,4 @@
-# Codex Live Status Bar 1.7.2
+# Codex Live Status Bar 1.7.3
 
 This download includes the universal macOS app, the community `handoff` skill, its installer, and instructions. Monitoring reads local data and does not call a model.
 
@@ -24,3 +24,7 @@ The app targets macOS13+, includes ARM and Intel, and is ad-hoc signed without D
 Source and updates: https://github.com/yzx96728-alt/codex-realtime-statusbar
 
 Bundle ID stays `local.cc.codex-usage-monitor`. Keep the final standard installation path stable. Ad-hoc designated requirements depend on code hashes: updated binaries and path migration can require new Accessibility consent or login-item review. Stable ID/path cannot guarantee consent reuse. No Developer ID/notarization is assumed, no weaker requirement is introduced. Builders with an existing stable certificate may set `SIGNING_IDENTITY`; default remains ad-hoc. Certificate-based consent reuse has not been tested for this candidate. `PayloadSHA256.txt` checks payload integrity, not publisher identity.
+
+The menu bar now uses a native CPU symbol and hottest-sensor temperature, refreshed every10 seconds. M1 sensors are supported; Intel TC0D is attempted without hardware validation, and other families may show unavailable. No administrator/helper/fan-control access. Use Show / recover the panel if needed. GUI trust is reported separately from the CLI probe; system consent remains required.
+
+If an enabled Accessibility switch still fails after an ad-hoc upgrade, the saved code requirement may belong to the old version. Quit the app, remove only its old Accessibility entry, add the final installed app again, authenticate yourself, and reopen the same copy. A separate CLI probe may remain denied while the live GUI process is trusted. Check live GUI trust and actual chat following.

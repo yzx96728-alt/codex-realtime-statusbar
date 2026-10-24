@@ -110,5 +110,10 @@
   "可在合适阶段准备交接。65% / 70% 是经验性提醒阈值，不是经过验证的最佳成本切换点；仍可继续工作。": "Consider a handoff at a suitable phase. 65% / 70% are heuristic reminders, not proven optimal cost thresholds; you can keep working.",
   "登录后自动启动": "Start at login",
   "登录项需系统批准…": "Approve login item in System Settings…",
-  "无法更改登录项": "Could not change login item"
+  "无法更改登录项": "Could not change login item",
+  "CPU传感器最高温度：{0}°C（{1}个传感器）；每10秒刷新。": "Hottest CPU sensor: {0}°C ({1} sensors); refreshed every 10 seconds.",
+  "CPU温度暂不可用；点击打开小窗菜单。": "CPU temperature unavailable; click for the status bar menu.",
+  "显示／找回小窗": "Show / recover the panel",
+  "CPU最高温度：{0}°C": "Hottest CPU sensor: {0}°C",
+  "CPU温度不可用（不支持或读取失败）": "CPU temperature unavailable (unsupported or read failed)"
 }

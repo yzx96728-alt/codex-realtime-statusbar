@@ -25,3 +25,6 @@ python3 Tests/InstallerTests.py
 if [ -n "${INSTALLER_PAYLOAD:-}" ]; then
     python3 Tests/UnifiedInstallerTests.py "$INSTALLER_PAYLOAD"
 fi
+swiftc -module-cache-path "$PROJECT_ROOT/build/module-cache" \
+    -framework IOKit Sources/WindowState.swift Sources/CPUTemperature.swift Tests/WindowTemperatureTests.swift -o build/tests/window-temperature-tests
+build/tests/window-temperature-tests

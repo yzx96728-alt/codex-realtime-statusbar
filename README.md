@@ -1,6 +1,6 @@
 # Codex实时状态栏
 
-**v1.7.2** 提供统一安装入口、原生登录启动和70%交接提示。完整测试范围与尚未实测的系统行为见 [验证记录](docs/v1.7.2-validation.md)。
+**v1.7.3** 修复小窗显示恢复，区分主进程与命令行授权，并将菜单栏改为 CPU 图标与只读温度。详见[验证记录与兼容范围](docs/v1.7.3-validation.md)。
 
 简体中文 · [English](README.en.md)
 
@@ -26,7 +26,7 @@
 
 ## 下载与开始使用
 
-在[下载页面](https://github.com/yzx96728-alt/codex-realtime-statusbar/releases/latest)下载 `CodexRealtimeStatusbar-v1.7.2-macOS-universal.zip`，解压后在版本文件夹中得到应用、通用技能、安装脚本与中英文说明。构建包包含 Apple Silicon 和 Intel 两种架构，最低构建目标为 macOS 13。
+在[下载页面](https://github.com/yzx96728-alt/codex-realtime-statusbar/releases/latest)下载 `CodexRealtimeStatusbar-v1.7.3-macOS-universal.zip`，解压后在版本文件夹中得到应用、通用技能、安装脚本与中英文说明。构建包包含 Apple Silicon 和 Intel 两种架构，最低构建目标为 macOS 13。
 
 1. 解压完整 ZIP，双击 `安装或升级.command`，一次安装应用和 handoff。旧版先退出、校验备份，再替换；技能相同跳过，修改需确认，多份同名暂停更新。
 2. 优先 `/Applications`，不可写时须同意后使用 `~/Applications`。选择是否登录启动，并按提示在“系统设置 → 隐私与安全性 → 辅助功能”授权最终应用。有效授权直接复用，Ad-hoc更新仍可能需重新授权。
@@ -103,3 +103,9 @@ ARCHITECTURES=arm64 ./scripts/build.sh
 - [完整使用说明](docs/使用说明.md)
 
 命令与链接参考：[Codex 开发者命令](https://learn.chatgpt.com/docs/developer-commands)、[聊天链接](https://learn.chatgpt.com/docs/reference/commands)。
+
+## CPU温度与升级授权
+
+菜单栏每10秒读取CPU传感器最高温度，M1系列有明确键表，M1 Max已实测；Intel TC0D仅尝试读取、未实机验证，其他系列暂显示不可用。缺失或过期显示横线，不安装提权服务、不写风扇、不调用模型。
+
+Ad-hoc升级后，蓝色辅助功能开关仍可能保存旧版签名。如主进程仍被拒绝，退出小窗，在“系统设置 → 隐私与安全性 → 辅助功能”仅移除它的旧条目，从最终安装路径重新添加并亲自认证，再打开同一份应用。不修改TCC数据库或放宽签名。命令行独立探针可能仍为false，以运行中GUI的状态和实际跟随为准。

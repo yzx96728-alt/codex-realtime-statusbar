@@ -1,6 +1,6 @@
 # Codex Live Status Bar
 
-**v1.7.2** adds a unified installer, native start-at-login and a 70% handoff hint. See [validation and remaining system-test limits](docs/v1.7.2-validation.md).
+**v1.7.3** restores panel visibility, distinguishes live GUI permission from CLI probes, and adds a native CPU icon with read-only temperature. See [validation and compatibility limits](docs/v1.7.3-validation.md).
 
 [简体中文](README.md) · English
 
@@ -19,7 +19,7 @@ A small, translucent macOS panel for local Codex chat usage. **Monitoring does n
 
 ## Download and setup
 
-Download `CodexRealtimeStatusbar-v1.7.2-macOS-universal.zip` from [Releases](https://github.com/yzx96728-alt/codex-realtime-statusbar/releases/latest), then extract the app.
+Download `CodexRealtimeStatusbar-v1.7.3-macOS-universal.zip` from [Releases](https://github.com/yzx96728-alt/codex-realtime-statusbar/releases/latest), then extract the app.
 
 1. Extract the complete ZIP and double-click `安装或升级.command` (Install or Upgrade). It integrates app and skill, validates backups and supports rollback. Identical skills are skipped; changes require confirmation, duplicate skills pause the update.
 2. Open `⋯ → 语言 / Language → English`. Changes apply immediately and persist across restarts.
@@ -57,7 +57,7 @@ No screenshots, OCR, uploads, background model processes or new services. Settin
 
 Codex’s local index/event format may change and require updates. This version does not hide specifically for internal Codex home/settings pages. Codex handles automatic compaction; the bar does not change its settings or offer a manual compact button.
 
-The v1.7.2 download includes the app, handoff skill and installer; its exact size is shown on the release page (the app is about1MB unpacked). It is separate from **GitHub Desktop**, whose installer is hundreds of MB. GitHub Desktop does not need to run while using the status bar.
+The v1.7.3 download includes the app, handoff skill and installer; its exact size is shown on the release page (the app is about1MB unpacked). It is separate from **GitHub Desktop**, whose installer is hundreds of MB. GitHub Desktop does not need to run while using the status bar.
 
 ## Build
 
@@ -83,3 +83,9 @@ A bare `$handoff` saves progress only. Explicitly request saving, creating/openi
 At65%, only color and click-through guidance change. At70%, fresh eligible usage and normal completion can show a handoff hint. Compaction and cancellation invalidate old hints; duplicate broadcasts do not refresh eligibility. Below55% rearms. These are heuristic thresholds, not proven optimal cost switching points.
 
 Choose native start-at-login during installation or in the menu. Manage it in System Settings > General > Login Items (& Extensions). The running monitor waits hidden, stops refresh while hidden, and resumes when Codex is foreground. Deliberate Quit is respected. Opening Codex cannot launch a monitor that is not running. Prefer /Applications; agree explicitly to ~/Applications if needed. No automatic elevation. See [package instructions](docs/INSTALL.en.md).
+
+## CPU temperature and upgrade consent
+
+The menu bar shows the hottest readable CPU sensor, sampled every10 seconds. M1-family keys are supported and M1 Max is hardware-tested. Intel TC0D is attempted without hardware validation; other families currently show unavailable. Missing or stale data shows a dash. No root helper, fan writes or model calls.
+
+On an ad-hoc upgrade, a blue Accessibility switch can still refer to an old code requirement. If live GUI trust remains denied, quit the app, remove only its old entry in System Settings > Privacy & Security > Accessibility, add the final installed app again and authenticate yourself. Reopen that same copy. No TCC database editing or relaxed signing requirements. The independent CLI probe can remain false even when the running GUI is trusted; use the live GUI status and actual following as acceptance.
